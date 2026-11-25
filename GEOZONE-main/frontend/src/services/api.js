@@ -10,7 +10,8 @@ import {
   getCityZones
 } from '../data/mockData';
 
-const API_BASE = '/api/v1';
+// Có thể đổi bằng biến môi trường VITE_API_BASE_URL (vd: /api/v1 hoặc http://localhost:5000/api/v1)
+let API_BASE = String(import.meta.env?.VITE_API_BASE_URL || '/api/v1').replace(/\/+$/, '');
 export const AUTH_INVALIDATED_EVENT = 'geozone:auth-invalidated';
 export const AUTH_EXPIRED_EVENT = 'geozone:auth-expired';
 const AUTH_EXPIRED_MESSAGE = 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.';
@@ -247,6 +248,67 @@ async function safeFetchEnvelope(url, options = {}) {
   return json;
 }
 
+/**
+ * Gọi endpoint xác thực (login/register). Nếu backend trả 404 do khác tiền tố
+ * đường dẫn (vd: /api/auth/login thay vì /api/v1/auth/login) thì tự thử tiền tố khác
+ * và ghi nhớ tiền tố hoạt động.
+ */
+let resolvedAuthBase = null;
+
+function getAuthBaseCandidates() {
+  const candidates = [resolvedAuthBase, API_BASE, '/api/v1', '/api'].filter(Boolean);
+  return [...new Set(candidates)];
+}
+
+async function authPost(path, body) {
+  const bases = getAuthBaseCandidates();
+  let lastStatus = null;
+
+  for (const base of bases) {
+    const response = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(body)
+    });
+
+    // 404 từ đường dẫn không tồn tại (thường là HTML) -> thử tiền tố tiếp theo
+    if (response.status === 404) {
+      let payload = null;
+      try { payload = await response.clone().json(); } catch { /* không phải JSON */ }
+      const isRouteMissing = !payload || !(payload.error?.message || payload.message);
+      if (isRouteMissing) {
+        lastStatus = 404;
+        continue;
+      }
+    }
+
+    let json = {};
+    try {
+      json = await response.json();
+    } catch {
+      if (response.ok) throw new Error('Backend trả về dữ liệu không hợp lệ.');
+    }
+
+    if (!response.ok) {
+      handleInactiveAccount(response, json);
+      throw new Error(json.error?.message || json.message || `Lỗi HTTP ${response.status}`);
+    }
+
+    resolvedAuthBase = base;
+    API_BASE = base; // các API khác dùng cùng tiền tố đã xác nhận hoạt động
+    return json.data !== undefined ? json.data : json;
+  }
+
+  if (lastStatus === 404) {
+    throw new Error(
+      `Không tìm thấy API ${path} (HTTP 404). Hãy kiểm tra backend đã chạy đúng cổng và đường dẫn `
+      + `(hiện proxy tới ${import.meta.env?.VITE_PROXY_TARGET || 'http://localhost:5000'}).`
+    );
+  }
+  throw new Error('Không thể kết nối máy chủ. Vui lòng kiểm tra kết nối và thử lại.');
+}
+
 /* ==========================================================================
    1. AUTHENTICATION & PROFILE APIS (API_DOCUMENTATION.md #2 & #3)
    ========================================================================== */
@@ -346,14 +408,10 @@ export async function registerApi({ username, email, password, name }) {
   const targetName = String(name || username || targetEmail.split('@')[0]).trim();
 
   try {
-    await safeFetch(`${API_BASE}/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: targetEmail,
-        password: String(password || ''),
-        name: targetName
-      })
+    await authPost('/auth/register', {
+      email: targetEmail,
+      password: String(password || ''),
+      name: targetName
     });
 
     return await loginApi({ email: targetEmail, password });
@@ -382,13 +440,9 @@ export async function loginApi({ username, email, password }) {
   }
 
   try {
-    const data = await safeFetch(`${API_BASE}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: targetEmail,
-        password: String(password || '')
-      })
+    const data = await authPost('/auth/login', {
+      email: targetEmail,
+      password: String(password || '')
     });
 
     // Backend trả về accessToken (JWT 15m)
