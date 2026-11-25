@@ -12,6 +12,7 @@
     "test": "node test/auth.test.js && node test/business_apis.test.js",
     "prisma:generate": "npx prisma generate",
     "prisma:migrate": "npx prisma migrate dev",
+    "create-admin": "node scripts/create-admin.js",
     "db:seed": "node ../data/seed/seed.js"
   },
   "dependencies": {

@@ -247,10 +247,13 @@ export const toggleUserStatus = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Người dùng không tồn tại!' });
     }
 
+    // Nếu client gửi is_active (boolean) thì đặt đúng giá trị đó, tránh lật nhầm khi dữ liệu trên màn hình đã cũ
+    const nextActive = typeof req.body?.is_active === 'boolean' ? req.body.is_active : !targetUser.is_active;
+
     const updatedUser = await prisma.$transaction(async (tx) => {
       const updated = await tx.user.update({
         where: { id: userId },
-        data: { is_active: !targetUser.is_active },
+        data: { is_active: nextActive },
         select: profileSelect,
       });
 
