@@ -510,13 +510,34 @@ export async function getZonesApi(cityKey) {
 /**
  * Lấy danh sách địa điểm theo bộ lọc (GET /api/v1/places)
  */
+function getLocalPlaces(params = {}) {
+  const cityKey = getCityKey(params.city);
+  const list = params.city
+    ? (PLACES_BY_CITY[cityKey] || [])
+    : Object.values(PLACES_BY_CITY).flat();
+  return list.map((place) => ({ ...place }));
+}
+
 export async function getPlacesApi(params = {}) {
   const q = new URLSearchParams(params).toString();
   const url = q ? `${API_BASE}/places?${q}` : `${API_BASE}/places`;
-  return safeFetch(url, {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' }
-  });
+
+  try {
+    const data = await safeFetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const list = Array.isArray(data)
+      ? data
+      : (data?.places || data?.items || data?.rows || null);
+
+    if (Array.isArray(list) && list.length > 0) return list;
+    console.warn('[GeoZone API] /places trả về rỗng hoặc sai định dạng, dùng dữ liệu địa điểm cục bộ.');
+  } catch (err) {
+    // Backend tắt / proxy lỗi 500 / lỗi mạng: vẫn hiển thị dữ liệu cục bộ để trang Khám phá dùng được
+    console.warn(`[GeoZone API] Không tải được /places (${err.message}), dùng dữ liệu địa điểm cục bộ.`);
+  }
+  return getLocalPlaces(params);
 }
 
 /**

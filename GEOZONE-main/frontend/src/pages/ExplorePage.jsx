@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useCallback, useMemo, useRef, useState, useEffect } from 'react';
 import '../styles/Explore.css';
 import '../styles/Planner.css';
 import ExploreTopBar from '../components/explore/ExploreTopBar';
@@ -13,6 +13,13 @@ import { generateItineraryApi, getPlacesApi, swapPlaceApi } from '../services/ap
 
 function getDisplayZoneCode(code) {
   return String(code || '').replace(/^(?:HUE|NINHBINH)-/i, '');
+}
+
+// Chuẩn hóa tọa độ (backend có thể trả string / lat,lng / null)
+function toCoordinate(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 export default function ExplorePage({
@@ -48,6 +55,8 @@ export default function ExplorePage({
   const [isLoadingPlaces, setIsLoadingPlaces] = useState(true);
   const [placesError, setPlacesError] = useState('');
   const [placesReloadKey, setPlacesReloadKey] = useState(0);
+  const listRef = useRef(null);
+  const [listFocus, setListFocus] = useState(null);
 
   // Planner parameters
   const [daysCount, setDaysCount] = useState(2);
@@ -58,7 +67,7 @@ export default function ExplorePage({
   // Khi đổi thành phố, xóa lịch trình cũ của thành phố trước để tránh hiển thị nhầm
   useEffect(() => {
     if (generatedPlan && generatedPlan.city && generatedPlan.city !== selectedCity) {
-      setGeneratedPlan(null);
+      onGeneratedPlanChange(null);
       setSwapState({ isOpen: false, dayIndex: 0, placeIndex: 0, place: null });
     }
   }, [selectedCity]);
@@ -88,6 +97,8 @@ export default function ExplorePage({
       setCityPlaces(places.map((place) => ({
         ...place,
         id: Number(place.id),
+        latitude: toCoordinate(place.latitude ?? place.lat),
+        longitude: toCoordinate(place.longitude ?? place.lng ?? place.lon),
         city: selectedCity,
         zoneDbCode: place.zoneCode,
         zoneCode: getDisplayZoneCode(place.zoneCode),
@@ -106,6 +117,43 @@ export default function ExplorePage({
       active = false;
     };
   }, [selectedCity, cityConfig.api, placesReloadKey]);
+
+  // Bấm vào marker trên bản đồ: chọn địa điểm và yêu cầu thanh danh sách trượt tới đúng thẻ
+  const handleSelectFromMap = useCallback((place) => {
+    setSelectedPlace(place);
+    setListFocus({ id: place.id, ts: Date.now() });
+  }, []);
+
+  useEffect(() => {
+    if (!listFocus || mode !== 'explore') return undefined;
+
+    const frame = requestAnimationFrame(() => {
+      const container = listRef.current;
+      if (!container) return;
+      const card = Array.from(container.querySelectorAll('[data-id]'))
+        .find((element) => element.dataset.id === String(listFocus.id));
+      if (!card) return;
+
+      if (container.scrollHeight > container.clientHeight + 1) {
+        const containerRect = container.getBoundingClientRect();
+        const cardRect = card.getBoundingClientRect();
+        const top = container.scrollTop
+          + (cardRect.top - containerRect.top)
+          - (container.clientHeight - cardRect.height) / 2;
+        container.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+      } else {
+        // Bố cục mobile: danh sách nằm dưới bản đồ, cuộn cả trang
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+
+      card.classList.remove('gz-flash');
+      void card.offsetWidth;
+      card.classList.add('gz-flash');
+      setTimeout(() => card.classList.remove('gz-flash'), 1600);
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [listFocus, mode]);
 
   // Filter place cards
   const filteredPlaces = useMemo(() => {
@@ -341,7 +389,7 @@ export default function ExplorePage({
             onAdminReset={onAdminReset}
           />
 
-          <div className="cards" id="list">
+          <div className="cards" id="list" ref={listRef}>
             {isLoadingPlaces ? (
               <div className="gz-empty-state" role="status" aria-live="polite">
                 <p>Đang tải địa điểm từ cơ sở dữ liệu…</p>
@@ -382,9 +430,10 @@ export default function ExplorePage({
           cityConfig={cityConfig}
           places={filteredPlaces}
           selectedPlace={selectedPlace}
-          onSelectPlace={setSelectedPlace}
+          onSelectPlace={handleSelectFromMap}
           onToggleCart={onToggleCart}
           cartItems={cartItems}
+          isVisible={mode === 'explore'}
         />
       </main>
 

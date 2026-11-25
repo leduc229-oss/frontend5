@@ -636,3 +636,18 @@
     max-width: calc(100vw - 32px);
   }
 }
+
+/* Làm nổi thẻ địa điểm khi được chọn từ bản đồ */
+@keyframes gz-card-flash {
+  0% { box-shadow: 0 0 0 0 rgba(11, 110, 142, .55); }
+  100% { box-shadow: 0 0 0 14px rgba(11, 110, 142, 0); }
+}
+
+.c-card.gz-flash {
+  animation: gz-card-flash 1.2s ease-out 1;
+}
+
+.gz-pin-icon {
+  background: transparent;
+  border: 0;
+}
